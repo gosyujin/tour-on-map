@@ -1,15 +1,17 @@
 // 「日程を変える」ダイアログ。貼り付けた日程表から、その場で tour ({ stops, legs }) を作る。
 // コマンドの npm run build-tour と同じ変換(src/lib/)を、ブラウザの中で動かしている。
 //
-//   貼り付けた日程表 → 公演の一覧 → 会場ごとの住所(分からない会場は入力してもらう)
+//   貼り付けた日程表 → 公演の一覧 → 会場ごとの住所(辞書に無い会場は、会場名から自動で探す)
 //   → 住所から位置(国土地理院) → 会場間の経路(OSRM) → 地図に表示して、このブラウザに保存
 //
 // 最初の表示には要らないので、ボタンが押されたときに読み込む(main.js の import('./editor.js'))。
 
+import municipalities from '../data/municipalities.json';
 import seedVenues from '../data/venues.json';
 import defaultText from '../tours/tour.txt?raw';
 import { h } from './dom.js';
 import { buildLegs, fetchRoute, resolveVenues, routeKey, toLeg, toTour } from './lib/build-tour.mjs';
+import { findVenue } from './lib/find-venue.mjs';
 import { parseTour } from './lib/parse-tour.mjs';
 import { clearTour, loadTour, loadVenues, saveTour, saveVenues } from './store.js';
 
@@ -35,14 +37,16 @@ let runId = 0; // 計算の途中でダイアログを閉じたら、進めて�
 let busy = false;
 
 // 会場名 → 入力中の住所・位置。日程表を書き換えても、入れた住所は消さない。
-//   { address, lat?, lng?, matched?, manual?, error?, badCoords?, base? }  base は辞書にあった元の値
+//   { address, lat?, lng?, approx?, matched?, manual?, error?, badCoords?, base?, lookup?, found? }
+//   base は辞書にあった元の値。lookup は会場名からの自動検索の状態('todo' → 'busy' → 'done' / 'none')、
+//   found は自動検索で当たったもの({ matched, via })
 const drafts = new Map();
 
 function draftOf(name) {
   if (!drafts.has(name)) {
     const known = loadVenues()[name] ?? seedVenues[name];
     const base = known?.address ? { address: known.address, lat: known.lat, lng: known.lng, approx: known.approx } : null;
-    drafts.set(name, base ? { ...base, base } : { address: '' });
+    drafts.set(name, base ? { ...base, base } : { address: '', lookup: 'todo' });
   }
   return drafts.get(name);
 }
@@ -58,11 +62,18 @@ function setProgress(text, isError = false) {
 
 function statusOf(d) {
   if (d.error) return { text: d.error, cls: 'error' };
+  if (d.found && hasPosition(d)) {
+    // 会場名から自動で探したもの。何に当たったかを見せて、違っていたら直せるようにする
+    return d.approx
+      ? { text: `会場そのものは見つからず、「${d.found.matched}」の位置で代用しています(位置は概略・${d.found.via})`, cls: 'need' }
+      : { text: `自動で見つけました: 「${d.found.matched}」(${d.found.via})`, cls: 'found' };
+  }
   if (hasPosition(d)) {
     const from = d.manual ? '手入力' : d.matched;
     return { text: `位置: ${d.lat.toFixed(5)}, ${d.lng.toFixed(5)}${from ? ` (${from})` : ''}`, cls: '' };
   }
-  if (!d.address) return { text: '住所を入れてください', cls: 'need' };
+  if (d.lookup === 'todo' || d.lookup === 'busy') return { text: '会場名から住所を調べています…', cls: '' };
+  if (!d.address) return { text: '自動では見つかりませんでした。住所を入れてください', cls: 'need' };
   return { text: '位置は、計算するときに住所から調べます', cls: '' };
 }
 
@@ -117,15 +128,70 @@ function parse() {
     parseError = err.message;
   }
   renderVenues();
+  updateSummary();
+  setProgress('');
 
-  const names = venueNames();
-  const need = names.filter((n) => !draftOf(n).address).length;
+  // 打っている途中の会場名で探しに行かないよう、入力が落ち着いてから探す
+  clearTimeout(lookupTimer);
+  lookupTimer = setTimeout(lookupMissing, 600);
+}
+
+function updateSummary() {
+  const text = el.text.value;
+  const ds = venueNames().map(draftOf);
+  const looking = ds.filter((d) => !d.address && (d.lookup === 'todo' || d.lookup === 'busy')).length;
+  const need = ds.filter((d) => !d.address && d.lookup === 'none').length;
+  const approx = ds.filter((d) => d.found && d.approx).length;
   el.parsed.classList.toggle('error', Boolean(parseError));
   if (parseError) el.parsed.textContent = parseError;
   else if (!text.trim()) el.parsed.textContent = '日程表を貼り付けてください。';
   else if (!events.length) el.parsed.textContent = '公演が見つかりません。「日時」「会場」という行と、その次の行に日時・会場名が必要です。';
-  else el.parsed.textContent = `${events.length}公演・${names.length}会場を読み取りました。${need ? `住所の分からない会場が ${need} か所あります。` : ''}`;
-  setProgress('');
+  else {
+    el.parsed.textContent = [
+      `${events.length}公演・${ds.length}会場を読み取りました。`,
+      looking ? `${looking} 会場の住所を、会場名から調べています…` : '',
+      need ? `自動で見つからなかった会場が ${need} か所あります。住所を入れてください。` : '',
+      approx ? `${approx} か所は、近くの地点で代用しています(位置は概略)。` : '',
+    ].join('');
+  }
+}
+
+// ---- 会場名からの自動検索 ------------------------------------------------------
+
+let lookupTimer = 0;
+let lookupRun = null; // 動いている自動検索(終わるまで待てるように持っておく)
+
+/** 辞書に無い会場の住所と位置を、会場名から探して入れる。1 会場ずつ順に。 */
+async function runLookups() {
+  for (;;) {
+    // ダイアログを閉じたら、そこで止める(開き直したときに続きから探す)
+    const name = el.dialog.open && venueNames().find((n) => draftOf(n).lookup === 'todo' && !draftOf(n).address);
+    if (!name) break;
+    const d = draftOf(name);
+    d.lookup = 'busy';
+    updateStatus(name);
+    const event = events.find((e) => e.venue === name);
+    const hit = await findVenue({ pref: event.pref, name: event.name }, municipalities).catch(() => null);
+    // 探しているあいだに住所や位置が手で入っていたら、そちらを優先する
+    const untouched = !d.address && !d.manual;
+    d.lookup = hit && untouched ? 'done' : 'none';
+    if (hit && untouched) {
+      Object.assign(d, { address: hit.address, lat: hit.lat, lng: hit.lng, approx: hit.approx, found: { matched: hit.matched, via: hit.via } });
+      const input = rowOf(name)?.querySelector('.venue-address');
+      if (input) input.value = hit.address;
+    }
+    updateStatus(name);
+    updateSummary();
+  }
+}
+
+/** 自動検索を始める。もう動いていれば、それが終わるのを待てる Promise を返す。 */
+function lookupMissing() {
+  // finally は代入のあとで動くので、すぐ終わったときも lookupRun が残らない
+  lookupRun ??= runLookups().finally(() => {
+    lookupRun = null;
+  });
+  return lookupRun;
 }
 
 /** 「35.7056, 139.7519」→ { lat, lng }。読めなければ null。 */
@@ -140,9 +206,11 @@ function parseCoords(text) {
 function useAddressPosition(d) {
   delete d.manual;
   delete d.matched;
+  delete d.found;
   const same = d.base && d.base.address === d.address;
   d.lat = same ? d.base.lat : undefined;
   d.lng = same ? d.base.lng : undefined;
+  d.approx = same ? d.base.approx : false;
 }
 
 function onVenueInput(e) {
@@ -160,10 +228,13 @@ function onVenueInput(e) {
     const pos = parseCoords(text);
     d.badCoords = Boolean(text) && !pos;
     d.error = d.badCoords ? '「緯度, 経度」の形で入れてください(例: 35.7056, 139.7519)' : '';
-    if (pos) Object.assign(d, pos, { manual: true });
-    else useAddressPosition(d);
+    if (pos) {
+      Object.assign(d, pos, { manual: true, approx: false });
+      delete d.found;
+    } else useAddressPosition(d);
   }
   updateStatus(name);
+  updateSummary();
 }
 
 function onVenueClick(e) {
@@ -217,6 +288,17 @@ async function build() {
     return;
   }
   const names = venueNames();
+  if (names.some((n) => ['todo', 'busy'].includes(draftOf(n).lookup) && !draftOf(n).address)) {
+    // 会場名からの自動検索が終わるまで待ってから、計算に進む
+    const run = ++runId;
+    setBusy(true);
+    setProgress('会場の住所を、会場名から調べています…');
+    clearTimeout(lookupTimer);
+    await lookupMissing();
+    if (run !== runId) return;
+    setBusy(false);
+    setProgress('');
+  }
   const bad = names.find((n) => draftOf(n).badCoords);
   if (bad) {
     setProgress(`緯度, 経度を読み取れない会場があります: ${bad}`, true);
@@ -242,7 +324,7 @@ async function build() {
     const venues = Object.fromEntries(
       names.map((n) => {
         const d = draftOf(n);
-        return [n, { address: d.address, ...(hasPosition(d) ? { lat: d.lat, lng: d.lng } : {}), ...(d.approx && d.base?.address === d.address ? { approx: true } : {}) }];
+        return [n, { address: d.address, ...(hasPosition(d) ? { lat: d.lat, lng: d.lng } : {}), ...(d.approx ? { approx: true } : {}) }];
       }),
     );
 

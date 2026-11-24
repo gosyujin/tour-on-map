@@ -539,6 +539,10 @@ a.gmaps:hover {
   font-weight: 700;
 }
 
+.venue-status-text.found {
+  color: #1b6b3a;
+}
+
 button.link {
   padding: 0;
   border: 0;

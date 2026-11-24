@@ -43,10 +43,11 @@
         <label for="editor-text">1. 日程表を貼り付ける(「日時」「会場」の行と、その次の行に日時・会場名があるもの)</label>
         <textarea id="editor-text" rows="7" spellcheck="false"></textarea>
         <p id="editor-parsed" role="status"></p>
-        <p class="editor-step">2. 会場の住所を確かめる(分からない会場は入れてください)</p>
+        <p class="editor-step">2. 会場の住所を確かめる(初めての会場は、会場名から自動で調べます)</p>
         <div id="editor-venues"></div>
         <p class="muted">
-          計算のとき、住所を国土地理院の住所検索へ、会場の位置を OSRM の公開サーバーへ送ります。
+          初めての会場は、会場名を Wikipedia・OpenStreetMap(Nominatim)・国土地理院の検索へ送って調べます。
+          計算のときは、住所を国土地理院の住所検索へ、会場の位置を OSRM の公開サーバーへ送ります。
           できた日程は、このブラウザにだけ保存されます(ほかの人や端末には見えません)。
           <button type="button" class="link" id="editor-download">表示中の日程を tour.json として保存</button>
         </p>
