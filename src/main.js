@@ -1,5 +1,7 @@
-import maplibregl from 'maplibre-gl';
+import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+// maplibre-gl 6 はワーカーを別ファイルから読むので、Vite が束ねたワーカーの URL を教える
+import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import './style.css';
 import { directionsUrl, tourUrls } from './gmaps.js';
 
@@ -7,6 +9,8 @@ const JAPAN = { center: [137.5, 37.5], zoom: 4.6 };
 const ROUTE = '#d7263d';
 const HIGHLIGHT = '#ff8a00';
 const ARROW = '#8f0f22';
+
+maplibregl.setWorkerUrl(workerUrl);
 
 const map = new maplibregl.Map({
   container: 'map',
