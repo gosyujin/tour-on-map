@@ -389,6 +389,12 @@ a.gmaps:hover {
     padding-bottom: env(safe-area-inset-bottom);
   }
 
+  /* PC では折りたたむと下端の固定を外すが、スマホでは下端に置いたまま見出しだけ残す
+     (外すと、パネルが画面の下の外に出て、開き直せなくなる) */
+  #panel.collapsed {
+    bottom: 0;
+  }
+
   #panel.collapsed .chevron {
     transform: rotate(180deg);
   }
