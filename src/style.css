@@ -127,7 +127,8 @@ a {
   font-size: 12.5px;
 }
 
-#btn-all {
+#btn-all,
+#btn-edit {
   padding: 4px 10px;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -374,6 +375,186 @@ a.gmaps:hover {
   max-width: 34em;
 }
 
+/* ---- 日程を変える(貼り付けて作り直すダイアログ) --------------------------- */
+
+#editor {
+  width: min(640px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+  padding: 0;
+  border: 0;
+  border-radius: 14px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35);
+  color: var(--fg);
+  overflow: hidden;
+}
+
+/* 開いているときだけ縦に並べる(閉じているときの display: none を上書きしない) */
+#editor[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+#editor::backdrop {
+  background: rgba(0, 0, 0, 0.42);
+}
+
+.editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 8px 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.editor-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+#editor-close {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--muted);
+}
+
+#editor-close:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.editor-body {
+  display: grid;
+  gap: 8px;
+  /* 行の高さは中身どおりにする(auto のままだと、はみ出したときにテキスト欄だけがつぶれる) */
+  grid-auto-rows: max-content;
+  min-height: 0;
+  padding: 12px 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.editor-body p {
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.editor-body > label,
+.editor-step {
+  font-weight: 700;
+  font-size: 13.5px !important;
+}
+
+.editor-step {
+  margin-top: 6px !important;
+}
+
+#editor textarea,
+#editor input {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid rgba(0, 0, 0, 0.3);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--fg);
+  font: inherit;
+}
+
+#editor textarea {
+  resize: vertical;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+#editor textarea:focus-visible,
+#editor input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  border-color: transparent;
+}
+
+#editor :disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+#editor-venues {
+  display: grid;
+  gap: 10px;
+}
+
+.venue {
+  display: grid;
+  gap: 3px;
+}
+
+.venue label {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.venue-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.error {
+  color: #b3261e;
+}
+
+.venue-status-text.need {
+  color: #7a5200;
+  font-weight: 700;
+}
+
+button.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #0b62c4;
+  font-size: inherit;
+  text-decoration: underline;
+}
+
+.editor-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+}
+
+#editor-progress {
+  flex: 1 1 200px;
+  margin: 0;
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.editor-foot button {
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+}
+
+.editor-foot button.primary {
+  border-color: var(--route);
+  background: var(--route);
+  color: #fff;
+  font-weight: 700;
+}
+
 /* ---- スマホ: パネルを下に置く -------------------------------------------- */
 
 @media (max-width: 720px) {
@@ -402,5 +583,30 @@ a.gmaps:hover {
   .maplibregl-ctrl-bottom-right,
   .maplibregl-ctrl-bottom-left {
     display: none;
+  }
+
+  /* ダイアログは画面いっぱいに広げる */
+  #editor {
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    max-height: 100%;
+    margin: 0;
+    border-radius: 0;
+  }
+
+  .editor-head {
+    padding-top: calc(10px + env(safe-area-inset-top));
+  }
+
+  .editor-body {
+    flex: 1;
+    align-content: start;
+  }
+
+  /* 16px 未満だと、iPhone では入力欄を押したときに画面が勝手に拡大される */
+  #editor textarea,
+  #editor input {
+    font-size: 16px;
   }
 }

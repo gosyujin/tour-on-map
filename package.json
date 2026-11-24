@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "build-tour": "node scripts/build-tour.mjs",
-    "test": "node --test scripts/"
+    "test": "node --test src/lib/"
   },
   "dependencies": {
     "maplibre-gl": "^6.19.0"

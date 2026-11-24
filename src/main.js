@@ -3,7 +3,9 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 // maplibre-gl 6 はワーカーを別ファイルから読むので、Vite が束ねたワーカーの URL を教える
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import './style.css';
+import { ext, h } from './dom.js';
 import { directionsUrl, tourUrls } from './gmaps.js';
+import { clearTour, loadTour } from './store.js';
 
 const JAPAN = { center: [137.5, 37.5], zoom: 4.6 };
 const ROUTE = '#d7263d';
@@ -58,8 +60,10 @@ const el = {
   sub: $('summary-sub'),
   stops: $('stops'),
   btnAll: $('btn-all'),
+  btnEdit: $('btn-edit'),
   gmapsAll: $('gmaps-all'),
   approxNote: $('approx-note'),
+  customNote: $('custom-note'),
 };
 const isNarrow = () => window.matchMedia('(max-width: 720px)').matches;
 
@@ -80,18 +84,6 @@ function today() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
-
-function h(tag, props = {}, ...children) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(props)) {
-    if (k === 'class') node.className = v;
-    else if (k === 'dataset') Object.assign(node.dataset, v);
-    else if (v !== false && v != null) node.setAttribute(k, v);
-  }
-  node.append(...children.filter((c) => c != null && c !== false));
-  return node;
-}
-const ext = (href, text, cls) => h('a', { href, target: '_blank', rel: 'noopener', class: cls }, text);
 
 // ---- 状態 ------------------------------------------------------------------
 
@@ -237,12 +229,13 @@ function renderList() {
   // 概要
   const total = legs.reduce((sum, l) => sum + l.distance, 0);
   const totalTime = legs.reduce((sum, l) => sum + l.duration, 0);
-  el.title.textContent = `${stops.length}会場 ${dateLabel(stops[0])} → ${dateLabel(stops.at(-1))}`;
-  el.sub.textContent = `車で 約${km(total)}・約${hours(totalTime)}`;
+  el.title.textContent = `${stops.length}会場 ${dateLabel(stops[0])}${stops.length > 1 ? ` → ${dateLabel(stops.at(-1))}` : ''}`;
+  el.sub.textContent = total ? `車で 約${km(total)}・約${hours(totalTime)}` : '';
   el.approxNote.hidden = !stops.some((s) => s.approx);
 
   // 全経路を Google マップで開くリンク(経由地の上限があるので、会場が多いと複数に分かれる)
   const urls = tourUrls(stops);
+  el.gmapsAll.hidden = !urls.length;
   el.gmapsAll.replaceChildren(
     h('span', { class: 'muted' }, 'Googleマップで全経路:'),
     ...urls.map((u) => ext(u.url, urls.length > 1 ? `${u.from + 1}→${u.to + 1}` : '開く', 'gmaps')),
@@ -293,18 +286,20 @@ function arrowImage() {
   return g.getImageData(0, 0, size, size);
 }
 
-function renderMap() {
-  const { stops, legs } = tour;
+/** 経路の線(GeoJSON)。properties.index は区間の番号(= 出発する会場の番号)。 */
+function routeData() {
+  return {
+    type: 'FeatureCollection',
+    features: tour.legs
+      .filter((l) => l.coordinates.length)
+      .map((l) => ({ type: 'Feature', properties: { index: l.from }, geometry: { type: 'LineString', coordinates: l.coordinates } })),
+  };
+}
+
+/** 経路のレイヤーと、その操作を用意する(一度だけ)。線の中身は renderMap が入れる。 */
+function initMap() {
   map.addImage('arrow', arrowImage(), { pixelRatio: 2 });
-  map.addSource('route', {
-    type: 'geojson',
-    data: {
-      type: 'FeatureCollection',
-      features: legs
-        .filter((l) => l.coordinates.length)
-        .map((l) => ({ type: 'Feature', properties: { index: l.from }, geometry: { type: 'LineString', coordinates: l.coordinates } })),
-    },
-  });
+  map.addSource('route', { type: 'geojson', data: routeData() });
   const line = { 'line-cap': 'round', 'line-join': 'round' };
   const width = (k) => ['interpolate', ['linear'], ['zoom'], 4, 2.2 * k, 9, 4 * k, 14, 7 * k];
   map.addLayer({ id: 'route-casing', type: 'line', source: 'route', layout: line, paint: { 'line-color': '#fff', 'line-width': width(1.7), 'line-opacity': 0.9 } });
@@ -345,6 +340,13 @@ function renderMap() {
   map.on('click', (e) => {
     if (!e.originalEvent.handled && selected) select(null);
   });
+}
+
+/** いまの日程の線とマーカーを描く。日程を差し替えたときにも呼ぶ。 */
+function renderMap() {
+  const { stops } = tour;
+  map.getSource('route').setData(routeData());
+  for (const m of markers.splice(0)) m.remove();
 
   // 同じ会場に 2 回来るときは、番号を「3・7」のようにまとめて 1 つのマーカーにする
   const byPlace = new Map();
@@ -366,18 +368,39 @@ function renderMap() {
   }
 }
 
-// ---- 起動 ------------------------------------------------------------------
+// ---- 起動・日程の差し替え ---------------------------------------------------
 
-async function start() {
+let mapInited = false;
+
+/** 日程を表示する。custom は、画面で作った日程(このブラウザに保存したもの)かどうか。 */
+async function showTour(next, { custom = false } = {}) {
+  selected = null;
+  popup?.remove();
+  popup = null;
+  tour = next;
+  renderList();
+  el.customNote.hidden = !custom;
+  el.stops.scrollTop = 0;
+
+  await styleReady;
+  if (!mapInited) {
+    initMap();
+    mapInited = true;
+  }
+  renderMap();
+  select(null);
+  fitAll();
+}
+
+async function fetchDefault() {
+  const res = await fetch(`${import.meta.env.BASE_URL}data/tour.json`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+async function showDefault() {
   try {
-    const res = await fetch(`${import.meta.env.BASE_URL}data/tour.json`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    tour = await res.json();
-    renderList();
-    await styleReady;
-    renderMap();
-    select(null);
-    fitAll();
+    await showTour(await fetchDefault());
     setStatus('');
   } catch (err) {
     console.error(err);
@@ -385,4 +408,42 @@ async function start() {
     setStatus('日程データを読み込めませんでした。再読み込みしてください。');
   }
 }
+
+async function start() {
+  // 画面で作った日程がこのブラウザにあれば、そちらを出す
+  const saved = loadTour();
+  if (saved) {
+    try {
+      await showTour(saved.tour, { custom: true });
+      setStatus('');
+      return;
+    } catch (err) {
+      console.error(err);
+      clearTour(); // 壊れた保存は捨てて、最初の日程に戻す
+    }
+  }
+  await showDefault();
+}
+
+// 日程を貼り付けて作り直す画面は、使うときに読み込む
+el.btnEdit.addEventListener('click', async () => {
+  el.btnEdit.disabled = true;
+  try {
+    const { openEditor } = await import('./editor.js');
+    openEditor({
+      getTour: () => tour,
+      async onBuilt(next, { saved }) {
+        await showTour(next, { custom: true });
+        setStatus(saved ? '日程を作りました' : '日程を作りました(このブラウザには保存できなかったので、再読み込みすると元に戻ります)', saved ? 3000 : 8000);
+      },
+      onReset: showDefault,
+    });
+  } catch (err) {
+    console.error(err);
+    setStatus('画面を読み込めませんでした。再読み込みしてください。', 5000);
+  } finally {
+    el.btnEdit.disabled = false;
+  }
+});
+
 start();

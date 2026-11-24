@@ -19,17 +19,43 @@
       <div id="panel-body">
         <div id="actions">
           <button type="button" id="btn-all">全体を表示</button>
+          <button type="button" id="btn-edit">日程を変える</button>
           <span id="gmaps-all"></span>
         </div>
         <ol id="stops"></ol>
         <p id="notes">
           距離・時間は OpenStreetMap の道路データによる車での目安です(渋滞・休憩は含みません)。
           <span id="approx-note" hidden>「位置は概略」の会場は、施設の正確な位置が地図データに無いため、近くの地点を使っています。</span>
+          <span id="custom-note" hidden>貼り付けた日程を表示しています(このブラウザにだけ保存)。</span>
         </p>
       </div>
     </aside>
 
     <div id="status" role="status">日程を読み込み中…</div>
+
+    <dialog id="editor" aria-labelledby="editor-title">
+      <header class="editor-head">
+        <h2 id="editor-title">日程を変える</h2>
+        <button type="button" id="editor-close" aria-label="閉じる">×</button>
+      </header>
+      <div class="editor-body">
+        <label for="editor-text">1. 日程表を貼り付ける(「日時」「会場」の行と、その次の行に日時・会場名があるもの)</label>
+        <textarea id="editor-text" rows="7" spellcheck="false"></textarea>
+        <p id="editor-parsed" role="status"></p>
+        <p class="editor-step">2. 会場の住所を確かめる(分からない会場は入れてください)</p>
+        <div id="editor-venues"></div>
+        <p class="muted">
+          計算のとき、住所を国土地理院の住所検索へ、会場の位置を OSRM の公開サーバーへ送ります。
+          できた日程は、このブラウザにだけ保存されます(ほかの人や端末には見えません)。
+          <button type="button" class="link" id="editor-download">表示中の日程を tour.json として保存</button>
+        </p>
+      </div>
+      <footer class="editor-foot">
+        <p id="editor-progress" role="status"></p>
+        <button type="button" id="editor-reset" hidden>最初の日程に戻す</button>
+        <button type="button" id="editor-build" class="primary">経路を計算して表示</button>
+      </footer>
+    </dialog>
 
     <section id="no-webgl" role="alert" hidden>
       <h1>地図を表示できません</h1>
