@@ -3,6 +3,8 @@
 巡業の日程表(日時・会場)から、会場を日時順に並べ、会場から会場への車の経路(陸路)を地図に表示する静的サイトです。
 GitHub Pages だけで動きます(画面からは経路 API を呼びません)。
 
+公開URL: https://gosyujin.com/tour-on-map/
+
 - 地図: [MapLibre GL JS](https://maplibre.org/) + [OpenStreetMap](https://www.openstreetmap.org/) 標準タイル
 - 経路: [OSRM](https://project-osrm.org/) の公開サーバーで事前に計算し、`public/data/tour.json` としてコミット
 - 各区間・全経路を Google マップで開くリンク付き
