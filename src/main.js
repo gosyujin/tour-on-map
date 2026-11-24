@@ -63,6 +63,7 @@ const el = {
   btnEdit: $('btn-edit'),
   gmapsAll: $('gmaps-all'),
   approxNote: $('approx-note'),
+  restNote: $('rest-note'),
   customNote: $('custom-note'),
 };
 const isNarrow = () => window.matchMedia('(max-width: 720px)').matches;
@@ -80,6 +81,9 @@ function hours(sec) {
 const md = (date) => `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
 const dateLabel = (s) => `${md(s.date)}${s.weekday ? `(${s.weekday})` : ''}`;
 const days = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86_400_000);
+/** 区間の前後の公演のあいだに、公演の無い日が何日あるか(翌日の公演なら 0、「中2日」なら 2)。 */
+const restDays = (leg) => Math.max(0, days(tour.stops[leg.from].date, tour.stops[leg.to].date) - 1);
+const restLabel = (n) => `中${n}日`;
 function today() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -89,6 +93,7 @@ function today() {
 
 let tour = { stops: [], legs: [] };
 const markers = []; // 会場の番号マーカー(会場番号順)
+const badges = new Map(); // 区間の番号 → 経路の上に置く「中N日」の札
 let selected = null; // { type: 'stop' | 'leg', index }
 let popup = null;
 
@@ -132,6 +137,7 @@ function select(next, { fly = true, scroll = true } = {}) {
       (next?.type === 'leg' && (tour.legs[next.index].from === i || tour.legs[next.index].to === i));
     m.getElement().classList.toggle('on', on);
   }
+  for (const [i, b] of badges) b.getElement().classList.toggle('on', i === legIndex);
   for (const node of el.stops.querySelectorAll('[data-type]')) {
     const on = next != null && node.dataset.type === next.type && Number(node.dataset.index) === next.index;
     node.classList.toggle('on', on);
@@ -204,7 +210,7 @@ function renderList() {
 
     const leg = legs[i];
     if (!leg) continue;
-    const gap = days(s.date, stops[leg.to].date);
+    const rest = restDays(leg);
     const moved = leg.distance > 0;
     items.push(
       h(
@@ -217,7 +223,7 @@ function renderList() {
           moved
             ? h('span', {}, h('b', {}, km(leg.distance)), ` 約${hours(leg.duration)}`)
             : h('span', {}, '同じ会場(移動なし)'),
-          gap > 1 && h('span', { class: 'muted' }, `中${gap - 1}日`),
+          rest > 0 && h('span', { class: 'rest' }, restLabel(rest)),
           leg.ferry && h('span', { class: 'approx' }, `フェリー${km(leg.ferry)}を含む`),
           moved && ext(directionsUrl([s, stops[leg.to]]), 'Googleマップ', 'gmaps'),
         ),
@@ -232,6 +238,7 @@ function renderList() {
   el.title.textContent = `${stops.length}会場 ${dateLabel(stops[0])}${stops.length > 1 ? ` → ${dateLabel(stops.at(-1))}` : ''}`;
   el.sub.textContent = total ? `車で 約${km(total)}・約${hours(totalTime)}` : '';
   el.approxNote.hidden = !stops.some((s) => s.approx);
+  el.restNote.hidden = !legs.some((l) => restDays(l) > 0);
 
   // 全経路を Google マップで開くリンク(経由地の上限があるので、会場が多いと複数に分かれる)
   const urls = tourUrls(stops);
@@ -286,14 +293,38 @@ function arrowImage() {
   return g.getImageData(0, 0, size, size);
 }
 
-/** 経路の線(GeoJSON)。properties.index は区間の番号(= 出発する会場の番号)。 */
+/** 経路の線(GeoJSON)。properties.index は区間の番号(= 出発する会場の番号)、rest は次の公演までに空く日数。 */
 function routeData() {
   return {
     type: 'FeatureCollection',
     features: tour.legs
       .filter((l) => l.coordinates.length)
-      .map((l) => ({ type: 'Feature', properties: { index: l.from }, geometry: { type: 'LineString', coordinates: l.coordinates } })),
+      .map((l) => ({
+        type: 'Feature',
+        properties: { index: l.from, rest: restDays(l) },
+        geometry: { type: 'LineString', coordinates: l.coordinates },
+      })),
   };
+}
+
+/** 線の、道のりで見たまんなかの点。「中N日」の札を置く場所にする。 */
+function midpoint(coords) {
+  // 経度 1 度の長さは緯度で変わるので、まんなかあたりの緯度でそろえる
+  const kx = Math.cos((coords[Math.floor(coords.length / 2)][1] * Math.PI) / 180);
+  const dist = (a, b) => Math.hypot((b[0] - a[0]) * kx, b[1] - a[1]);
+  let total = 0;
+  for (let i = 1; i < coords.length; i++) total += dist(coords[i - 1], coords[i]);
+  let rest = total / 2;
+  for (let i = 1; i < coords.length; i++) {
+    const [a, b] = [coords[i - 1], coords[i]];
+    const d = dist(a, b);
+    if (rest <= d) {
+      const t = d ? rest / d : 0;
+      return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+    }
+    rest -= d;
+  }
+  return coords.at(-1);
 }
 
 /** 経路のレイヤーと、その操作を用意する(一度だけ)。線の中身は renderMap が入れる。 */
@@ -303,7 +334,17 @@ function initMap() {
   const line = { 'line-cap': 'round', 'line-join': 'round' };
   const width = (k) => ['interpolate', ['linear'], ['zoom'], 4, 2.2 * k, 9, 4 * k, 14, 7 * k];
   map.addLayer({ id: 'route-casing', type: 'line', source: 'route', layout: line, paint: { 'line-color': '#fff', 'line-width': width(1.7), 'line-opacity': 0.9 } });
-  map.addLayer({ id: 'route', type: 'line', source: 'route', layout: line, paint: { 'line-color': ROUTE, 'line-width': width(1) } });
+  // 翌日に公演のある区間は実線、日が空く区間は破線にして、余裕のある移動が線だけで分かるようにする
+  const hasRest = ['>', ['get', 'rest'], 0];
+  map.addLayer({ id: 'route', type: 'line', source: 'route', layout: line, filter: ['!', hasRest], paint: { 'line-color': ROUTE, 'line-width': width(1) } });
+  map.addLayer({
+    id: 'route-rest',
+    type: 'line',
+    source: 'route',
+    layout: { 'line-cap': 'butt', 'line-join': 'round' },
+    filter: hasRest,
+    paint: { 'line-color': ROUTE, 'line-width': width(1), 'line-dasharray': [2, 1.4] },
+  });
   map.addLayer({
     id: 'route-hl',
     type: 'line',
@@ -347,6 +388,25 @@ function renderMap() {
   const { stops } = tour;
   map.getSource('route').setData(routeData());
   for (const m of markers.splice(0)) m.remove();
+  for (const b of badges.values()) b.remove();
+  badges.clear();
+
+  // 日が空く区間には、経路のまんなかに「中N日」の札を置く
+  for (const leg of tour.legs) {
+    const rest = restDays(leg);
+    if (!rest || !leg.coordinates.length) continue;
+    const [a, b] = [stops[leg.from], stops[leg.to]];
+    const node = h(
+      'button',
+      { type: 'button', class: 'rest-badge', title: `${dateLabel(a)} ${a.name} → ${dateLabel(b)} ${b.name}`, 'aria-label': `${leg.from + 1}番目から${leg.to + 1}番目まで ${restLabel(rest)}` },
+      restLabel(rest),
+    );
+    node.addEventListener('click', (e) => {
+      e.stopPropagation();
+      select({ type: 'leg', index: leg.from }, { fly: false });
+    });
+    badges.set(leg.from, new maplibregl.Marker({ element: node }).setLngLat(midpoint(leg.coordinates)).addTo(map));
+  }
 
   // 同じ会場に 2 回来るときは、番号を「3・7」のようにまとめて 1 つのマーカーにする
   const byPlace = new Map();

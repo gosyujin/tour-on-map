@@ -7,6 +7,7 @@ GitHub Pages だけで動きます。日程は、画面の「日程を変える�
 
 - 地図: [MapLibre GL JS](https://maplibre.org/) + [OpenStreetMap](https://www.openstreetmap.org/) 標準タイル
 - 経路: [OSRM](https://project-osrm.org/) の公開サーバーで計算。最初に出る日程は、事前に計算して `public/data/tour.json` としてコミット
+- 次の公演まで日が空く区間は破線にし、経路の上に「中N日」と表示(翌日に公演のある区間は実線)
 - 各区間・全経路を Google マップで開くリンク付き
 - ビルド: Vite / デプロイ: GitHub Actions → GitHub Pages
 
